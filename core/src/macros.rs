@@ -111,3 +111,32 @@ macro_rules! by_name {
         }()
     )
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(dead_code)]
+
+    jsonrpc_client! {
+        pub struct TestRpcClient {
+            pub fn default_param_structure(&mut self) -> Future<()>;
+
+            #[doc(hidden)]
+            pub fn default_param_structure_with_attribute(&mut self) -> Future<()>;
+
+            #[doc(hidden)]
+            [param_structure = by_name]
+            pub fn by_name_with_attribute(&mut self) -> Future<()>;
+
+            [param_structure = by_position]
+            pub fn by_position_with_args(&mut self, input: &str) -> Future<String>;
+
+            [param_structure = by_name]
+            pub fn by_name_with_args(&mut self, arg0: String, arg1: u64) -> Future<String>;
+        }
+    }
+
+    #[test]
+    fn syntax() {
+        // do nothing
+    }
+}
