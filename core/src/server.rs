@@ -1,5 +1,5 @@
 use super::{Error, ErrorKind, OutgoingMessage, Result};
-use id_generator::IdGenerator;
+use crate::id_generator::IdGenerator;
 
 use futures::future::Either;
 use futures::{
@@ -407,5 +407,5 @@ impl ServerHandler for Server {
 pub trait ServerHandler: Future<Item = (), Error = Error> {
     /// Handles a request coming in from the server, optionally sending a result back to the
     /// server.
-    fn process_request(&mut self, Request, sender: mpsc::Sender<OutgoingMessage>) -> Result<()>;
+    fn process_request(&mut self, request: Request, sender: mpsc::Sender<OutgoingMessage>) -> Result<()>;
 }
