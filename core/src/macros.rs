@@ -8,12 +8,18 @@
 
 /// The main macro of this crate. Generates JSON-RPC 2.0 client structs with automatic serialization
 /// and deserialization. Method calls get correct types automatically.
+///
+/// Optional [param_structure] annotation accepts two arguments:
+///  - by_name: parameters are passed as a dictionary
+///  - by_position: parameters are passed as an array
+/// by_position parameter passing strategy is applied by default
 #[macro_export]
 macro_rules! jsonrpc_client {
     (
         $(#[$struct_attr:meta])*
         pub struct $struct_name:ident {$(
             $(#[$attr:meta])*
+            $([param_structure = $param_structure:ident])?
             pub fn $method:ident(&mut $selff:ident $(, $arg_name:ident: $arg_ty:ty)*)
                 -> Future<$return_ty:ty>;
         )*}
@@ -30,29 +36,78 @@ macro_rules! jsonrpc_client {
             }
 
             $(
-                $(#[$attr])*
-                pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
-                    -> impl $crate::Future<Item = $return_ty, Error = $crate::Error> + 'static
-                {
-                    let method = String::from(stringify!($method));
-                    let raw_params = expand_params!($($arg_name,)*);
-                    let params = $crate::serialize_parameters(&raw_params);
-                    let (tx, rx) = $crate::oneshot::channel();
-                    let client_call = params.map(|p| $crate::OutgoingMessage::RpcCall(method, p, tx));
-                    $selff.client.send_client_call(client_call, rx)
+                jsonrpc_client_method!{
+                    $(#[$attr])*
+                    $([param_structure = $param_structure])?
+                    pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
+                        -> Future<$return_ty>;
                 }
             )*
         }
     )
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! jsonrpc_client_method {
+    (
+        $(#[$attr:meta])*
+        pub fn $method:ident(&mut $selff:ident $(, $arg_name:ident: $arg_ty:ty)*)
+            -> Future<$return_ty:ty>;
+    ) => {
+        jsonrpc_client_method! {
+            $(#[$attr])*
+            [param_structure = by_position]
+            pub fn $method(&mut $selff $(, $arg_name : $arg_ty)*)
+                -> Future<$return_ty>;
+        }
+    };
+
+    (
+        $(#[$attr:meta])*
+        [param_structure = $param_structure:ident]
+        pub fn $method:ident(&mut $selff:ident $(, $arg_name:ident: $arg_ty:ty)*)
+            -> Future<$return_ty:ty>;
+    ) => {
+        $(#[$attr])*
+        pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
+            -> impl $crate::Future<Item = $return_ty, Error = $crate::Error> + 'static
+        {
+            let method = String::from(stringify!($method));
+            let raw_params = $crate::$param_structure!($($arg_name,)*);
+            let params = raw_params.and_then(|p| $crate::serialize_parameters(&p));
+            let (tx, rx) = $crate::oneshot::channel();
+            let client_call = params.map(|p| $crate::OutgoingMessage::RpcCall(method, p, tx));
+            $selff.client.send_client_call(client_call, rx)
+        }
+    };
+}
 
 /// Expands a variable list of parameters into its serializable form. Is needed to make the params
 /// of a nullary method equal to `[]` instead of `()` and thus make sure it serializes to `[]`
 /// instead of `null`.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! expand_params {
-    () => ([] as [(); 0]);
-    ($($arg_name:ident,)+) => (($($arg_name,)+))
+macro_rules! by_position {
+    () => (Ok([] as [(); 0]));
+    ($($arg_name:ident,)+) => (Ok(($($arg_name,)+)))
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! by_name {
+    () => (Ok(std::collections::HashMap::<&'static str, serde_json::Value>::new()));
+    ($($arg_name:ident,)+) => (
+        // Create a slice of (&str, Value) tuples, and collect it into HashMap
+        || -> Result<std::collections::HashMap<&'static str, serde_json::Value>, $crate::Error> {
+            let mut map = std::collections::HashMap::new();
+            $(
+                let key = stringify!($arg_name);
+                let value = serde_json::to_value(&$arg_name)
+                    .map_err(|_| $crate::ErrorKind::SerializeError)?;
+                map.insert(key, value);
+            )+
+            Ok(map)
+        }()
+    )
 }
